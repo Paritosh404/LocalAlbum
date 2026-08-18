@@ -1,5 +1,6 @@
 name: LocationAlbums
 options:
+  createIntermediateGroups: true
   bundleIdPrefix: com.example
   deploymentTarget:
     iOS: "17.0"
@@ -14,6 +15,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.LocationAlbums
+        PRODUCT_NAME: LocationAlbums
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: 1
-
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO

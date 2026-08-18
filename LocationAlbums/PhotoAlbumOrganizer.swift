@@ -1,4 +1,5 @@
 import CoreLocation
+import Combine
 import Foundation
 import Photos
 
@@ -136,7 +137,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
         let folders = PHCollectionList.fetchCollectionLists(with: .folder, subtype: .any, options: nil)
         var matchingFolder: PHCollectionList?
         folders.enumerateObjects { folder, _, stop in
-            if folder.localizedTitle == name {
+            if folder.localizedTitle == name && folder.canPerform(.addContent) {
                 matchingFolder = folder
                 stop.pointee = true
             }
@@ -149,7 +150,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
 
     private func findOrCreateFolder(named name: String, inside parent: PHCollectionList) async throws -> PHCollectionList {
         if let existing = childCollections(in: parent).compactMap({ $0 as? PHCollectionList })
-            .first(where: { $0.localizedTitle == name }) {
+            .first(where: { $0.localizedTitle == name && $0.canPerform(.addContent) }) {
             return existing
         }
         let folder = try await createFolder(named: name)
@@ -175,7 +176,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
 
     private func findOrCreateAlbum(named name: String, inside parent: PHCollectionList) async throws -> PHAssetCollection {
         if let existing = childCollections(in: parent).compactMap({ $0 as? PHAssetCollection })
-            .first(where: { $0.localizedTitle == name }) {
+            .first(where: { $0.localizedTitle == name && $0.canPerform(.addContent) }) {
             return existing
         }
 
@@ -203,14 +204,26 @@ final class PhotoAlbumOrganizer: ObservableObject {
     }
 
     private func addChild(_ child: PHCollection, to parent: PHCollectionList) async throws {
+        guard parent.canPerform(.addContent) else {
+            throw OrganizerError.collectionNotEditable(parent.localizedTitle ?? "Photos folder")
+        }
         try await PHPhotoLibrary.shared().performChanges {
             PHCollectionListChangeRequest(for: parent)?.addChildCollections([child] as NSArray)
         }
     }
 
     private func add(_ assets: [PHAsset], to album: PHAssetCollection) async throws {
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetCollectionChangeRequest(for: album)?.addAssets(assets as NSArray)
+        guard album.canPerform(.addContent) else {
+            throw OrganizerError.collectionNotEditable(album.localizedTitle ?? "Photos album")
+        }
+
+        // Smaller transactions avoid oversized Photos change requests for large libraries.
+        for start in stride(from: 0, to: assets.count, by: 500) {
+            let end = min(start + 500, assets.count)
+            let batch = Array(assets[start..<end])
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetCollectionChangeRequest(for: album)?.addAssets(batch as NSArray)
+            }
         }
     }
 
@@ -239,11 +252,14 @@ private struct CoordinateKey: Hashable {
 
 private enum OrganizerError: LocalizedError {
     case collectionCreationFailed(String)
+    case collectionNotEditable(String)
 
     var errorDescription: String? {
         switch self {
         case .collectionCreationFailed(let name):
             return "Could not create “\(name)”."
+        case .collectionNotEditable(let name):
+            return "“\(name)” cannot be modified. Rename or remove the existing Photos item, then try again."
         }
     }
 }
