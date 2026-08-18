@@ -56,7 +56,7 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("Version 1.7 • Build 8")
+                Text("Version 1.7.1 • Build 9")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 

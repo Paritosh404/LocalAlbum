@@ -53,11 +53,11 @@ jobs:
           fi
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          /usr/bin/zip -qry LocationAlbums-v1.7-unsigned.ipa Payload
+          /usr/bin/zip -qry LocationAlbums-v1.7.1-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: LocationAlbums-v1.7-unsigned-ipa
-          path: LocationAlbums-v1.7-unsigned.ipa
+          name: LocationAlbums-v1.7.1-unsigned-ipa
+          path: LocationAlbums-v1.7.1-unsigned.ipa
           if-no-files-found: error

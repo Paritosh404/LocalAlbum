@@ -116,8 +116,8 @@ final class PhotoAlbumOrganizer: ObservableObject {
             }
 
             let dateGroup = yearAndMonth(for: asset.creationDate)
-            let location = YearLocation(year: dateGroup.year, place: placeName)
-            locatedGroups[location, default: [:]][dateGroup.month, default: []].append(asset)
+            let locationKey = YearLocation(year: dateGroup.year, place: placeName)
+            locatedGroups[locationKey, default: [:]][dateGroup.month, default: []].append(asset)
             resolvedAssets.append(asset)
         }
 
