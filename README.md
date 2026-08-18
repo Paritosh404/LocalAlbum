@@ -27,13 +27,21 @@ Organized Media/
 - Neighborhoods, streets, landmarks, and tiny GPS differences do not affect the album name.
 - Only assets with no valid GPS coordinate go into `Unknown Location`.
 - GPS-bearing assets whose lookup temporarily fails go into `Location Lookup Pending`, never `Unknown Location`.
-- Reverse geocoding is paced and retried four times; running the organizer again retries pending locations.
+- Apple's worldwide fallback is retried up to four times; running the organizer again retries pending locations.
 - Located media is grouped first by year and location.
 - A location represented in only one month remains a single `City, State` album.
 - A location represented in multiple months becomes a `City, State` folder containing named month albums.
 - Re-running the organizer reuses the year folders and albums and repairs the current hierarchy's review albums.
 
 Albums reference the originals; the app does not duplicate or remove photos. Re-running it reuses the same folders and albums.
+
+## Offline location lookup
+
+- Indian coordinates use the bundled indexed GeoNames database containing 557,995 populated places and all 36 state/UT mappings.
+- A simplified India boundary prevents coordinates in neighboring countries from being treated as Indian.
+- Coordinates outside India, or Indian coordinates without a sensible nearby match, use Apple's reverse geocoder.
+- Both offline and Apple results are saved in a persistent on-device cache.
+- The bundled source data is © GeoNames and licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ## Build locally on a Mac
 
@@ -47,20 +55,20 @@ The deployment target is iOS 17.
 
 ## Build an IPA with GitHub Actions
 
-Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.7.1-unsigned-ipa` from the run's **Artifacts** section.
+Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.8-unsigned-ipa` from the run's **Artifacts** section.
 
 The workflow creates an **unsigned** IPA so no signing certificate needs to be stored in GitHub. This is suitable for AltStore, which signs the IPA with your Apple ID during installation.
 
 ### Install with AltStore
 
-1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.7.1-unsigned.ipa`.
+1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.8-unsigned.ipa`.
 2. Open AltStore on the iPhone and choose **My Apps → +**.
-3. Select `LocationAlbums-v1.7.1-unsigned.ipa` from Files.
+3. Select `LocationAlbums-v1.8-unsigned.ipa` from Files.
 4. Keep AltServer available for the initial install and subsequent refreshes.
 
 Free Apple Developer accounts generally require the app to be refreshed every seven days. Paid developer accounts have a longer signing period.
 
-## Version 1.7.1 adaptive month structure
+## Version 1.8 offline India lookup
 
 - Declares both Photos privacy descriptions in `project.yml`, so XcodeGen preserves them when regenerating `Info.plist`.
 - Verifies the privacy keys in the compiled app before GitHub Actions packages the IPA.
@@ -71,6 +79,8 @@ Free Apple Developer accounts generally require the app to be refreshed every se
 - Uses `Organized Media → Year → City, State` for single-month locations.
 - Adds `City, State → Month` only when that location contains media from multiple months.
 - Places location problems together under `Needs Review`.
+- Resolves Indian GPS coordinates locally without API pacing or network access.
+- Uses Apple geocoding only as the worldwide fallback.
 - Checks that existing Photos folders and albums allow changes before modifying them.
 - Adds photos in batches to avoid oversized Photos library transactions.
 

@@ -44,6 +44,18 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryUsageDescription" "$APP_PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" "$APP_PLIST"
 
+      - name: Verify offline location assets
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/LocationAlbums.app"
+          DB_PATH="$(find "$APP_PATH" -name IndiaPlaces.sqlite -print -quit)"
+          BOUNDARY_PATH="$(find "$APP_PATH" -name IndiaBoundary.json -print -quit)"
+          NOTICE_PATH="$(find "$APP_PATH" -name GEO_DATA_NOTICE.txt -print -quit)"
+          test -n "$DB_PATH"
+          test -n "$BOUNDARY_PATH"
+          test -n "$NOTICE_PATH"
+          test "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM places;')" = "557995"
+          test "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM states;')" = "36"
+
       - name: Package unsigned IPA
         run: |
           APP_PATH="build/Build/Products/Release-iphoneos/LocationAlbums.app"
@@ -53,11 +65,11 @@ jobs:
           fi
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          /usr/bin/zip -qry LocationAlbums-v1.7.1-unsigned.ipa Payload
+          /usr/bin/zip -qry LocationAlbums-v1.8-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: LocationAlbums-v1.7.1-unsigned-ipa
-          path: LocationAlbums-v1.7.1-unsigned.ipa
+          name: LocationAlbums-v1.8-unsigned-ipa
+          path: LocationAlbums-v1.8-unsigned.ipa
           if-no-files-found: error

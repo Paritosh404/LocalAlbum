@@ -16,6 +16,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
     private let reviewFolderName = "Needs Review"
     private let unknownLocationName = "Unknown Location"
     private let pendingLocationName = "Location Lookup Pending"
+    private let locationResolver = HybridLocationResolver()
     private let groupingCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -80,7 +81,6 @@ final class PhotoAlbumOrganizer: ObservableObject {
         var gpsAssets: [PHAsset] = []
         var resolvedAssets: [PHAsset] = []
         var locationCache: [CoordinateKey: LocationResolution] = [:]
-        let geocoder = CLGeocoder()
         let totalAssets = fetchResult.count
 
         for index in 0..<totalAssets {
@@ -100,9 +100,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
             if let cached = locationCache[cacheKey] {
                 resolution = cached
             } else {
-                // Avoid overwhelming Apple's reverse-geocoding service on large libraries.
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                if let placeName = await cityAndState(for: location, using: geocoder) {
+                if let placeName = await locationResolver.resolve(location) {
                     resolution = .resolved(placeName)
                 } else {
                     resolution = .unresolved
@@ -120,6 +118,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
             locatedGroups[locationKey, default: [:]][dateGroup.month, default: []].append(asset)
             resolvedAssets.append(asset)
         }
+        locationResolver.flushCache()
 
         do {
             let root = try await findOrCreateRootFolder(named: rootFolderName)
@@ -186,45 +185,6 @@ final class PhotoAlbumOrganizer: ObservableObject {
         } catch {
             presentError("The albums could not be updated: \(error.localizedDescription)")
         }
-    }
-
-    /// Apple's locality represents city, town, village, or municipality.
-    /// If it is absent, subAdministrativeArea is the county fallback.
-    private func cityAndState(for location: CLLocation, using geocoder: CLGeocoder) async -> String? {
-        for attempt in 0..<4 {
-            do {
-                guard let placemark = try await geocoder.reverseGeocodeLocation(location).first else {
-                    throw OrganizerError.emptyGeocodeResult
-                }
-                let state = nonEmpty(placemark.administrativeArea)
-                let country = nonEmpty(placemark.country)
-                guard let place = nonEmpty(placemark.locality)
-                        ?? nonEmpty(placemark.subAdministrativeArea)
-                        ?? state
-                        ?? country else {
-                    throw OrganizerError.emptyGeocodeResult
-                }
-                if let state, state != place {
-                    return "\(place), \(state)"
-                }
-                if let country, country != place {
-                    return "\(place), \(country)"
-                }
-                return place
-            } catch {
-                guard attempt < 3 else { return nil }
-                let delay = UInt64(attempt + 1) * 700_000_000
-                try? await Task.sleep(nanoseconds: delay)
-            }
-        }
-        return nil
-    }
-
-    private func nonEmpty(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-            return nil
-        }
-        return value
     }
 
     private func yearAndMonth(for date: Date?) -> (year: String, month: MonthGroup) {
@@ -394,7 +354,6 @@ private struct CoordinateKey: Hashable {
 private enum OrganizerError: LocalizedError {
     case collectionCreationFailed(String)
     case collectionNotEditable(String)
-    case emptyGeocodeResult
 
     var errorDescription: String? {
         switch self {
@@ -402,8 +361,6 @@ private enum OrganizerError: LocalizedError {
             return "Could not create “\(name)”."
         case .collectionNotEditable(let name):
             return "“\(name)” cannot be modified. Rename or remove the existing Photos item, then try again."
-        case .emptyGeocodeResult:
-            return "The location lookup returned no place information."
         }
     }
 }

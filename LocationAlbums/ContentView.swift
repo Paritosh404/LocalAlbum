@@ -56,7 +56,11 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("Version 1.7.1 • Build 9")
+                Text("India place data © GeoNames · CC BY 4.0")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+
+                Text("Version 1.8 • Build 10")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 

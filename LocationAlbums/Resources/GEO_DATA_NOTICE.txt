@@ -1,0 +1,9 @@
+India place names and administrative divisions are derived from GeoNames data.
+
+Source: https://www.geonames.org/
+Download: https://download.geonames.org/export/dump/IN.zip
+License: Creative Commons Attribution 4.0 (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+The India country boundary is derived from the GeoNames simplified country
+shapes archive and is distributed under the same attribution terms.
