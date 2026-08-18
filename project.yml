@@ -21,8 +21,8 @@ targets:
       properties:
         CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
         CFBundleDisplayName: Location Albums
-        CFBundleShortVersionString: "1.8"
-        CFBundleVersion: "10"
+        CFBundleShortVersionString: "1.9"
+        CFBundleVersion: "11"
         LSRequiresIPhoneOS: true
         NSPhotoLibraryUsageDescription: Location Albums needs access to organize photos, videos, and other media using their saved GPS location.
         NSPhotoLibraryAddUsageDescription: Location Albums needs permission to add your existing media to location albums.

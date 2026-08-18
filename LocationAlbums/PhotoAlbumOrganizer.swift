@@ -100,21 +100,26 @@ final class PhotoAlbumOrganizer: ObservableObject {
             if let cached = locationCache[cacheKey] {
                 resolution = cached
             } else {
-                if let placeName = await locationResolver.resolve(location) {
-                    resolution = .resolved(placeName)
+                if let resolvedLocation = await locationResolver.resolve(location) {
+                    resolution = .resolved(resolvedLocation)
                 } else {
                     resolution = .unresolved
                 }
                 locationCache[cacheKey] = resolution
             }
 
-            guard case .resolved(let placeName) = resolution else {
+            guard case .resolved(let resolvedLocation) = resolution else {
                 pendingAssets.append(asset)
                 continue
             }
 
             let dateGroup = yearAndMonth(for: asset.creationDate)
-            let locationKey = YearLocation(year: dateGroup.year, place: placeName)
+            let locationKey = YearLocation(
+                year: dateGroup.year,
+                country: resolvedLocation.country,
+                state: resolvedLocation.state,
+                city: resolvedLocation.city
+            )
             locatedGroups[locationKey, default: [:]][dateGroup.month, default: []].append(asset)
             resolvedAssets.append(asset)
         }
@@ -124,7 +129,8 @@ final class PhotoAlbumOrganizer: ObservableObject {
             let root = try await findOrCreateRootFolder(named: rootFolderName)
             let reviewFolder = try await findOrCreateFolder(named: reviewFolderName, inside: root)
             let sortedGroups = locatedGroups.sorted {
-                ($0.key.year, $0.key.place) < ($1.key.year, $1.key.place)
+                ($0.key.year, $0.key.country, $0.key.state, $0.key.city)
+                    < ($1.key.year, $1.key.country, $1.key.state, $1.key.city)
             }
             let locationWrites = sortedGroups.reduce(0) { total, group in
                 total + max(group.value.count, 1)
@@ -144,16 +150,18 @@ final class PhotoAlbumOrganizer: ObservableObject {
             }
 
             for (key, monthGroups) in sortedGroups {
-                statusText = "Updating \(key.year) / \(key.place)…"
+                statusText = "Updating \(key.year) / \(key.country) / \(key.state) / \(key.city)…"
                 let yearFolder = try await findOrCreateFolder(named: key.year, inside: root)
+                let countryFolder = try await findOrCreateFolder(named: key.country, inside: yearFolder)
+                let stateFolder = try await findOrCreateFolder(named: key.state, inside: countryFolder)
 
                 if monthGroups.count == 1, let assets = monthGroups.values.first {
-                    let locationAlbum = try await findOrCreateAlbum(named: key.place, inside: yearFolder)
+                    let locationAlbum = try await findOrCreateAlbum(named: key.city, inside: stateFolder)
                     try await add(assets, to: locationAlbum)
                     completedWrites += 1
                     progress = 0.72 + Double(completedWrites) / Double(max(totalWrites, 1)) * 0.28
                 } else {
-                    let locationFolder = try await findOrCreateFolder(named: key.place, inside: yearFolder)
+                    let locationFolder = try await findOrCreateFolder(named: key.city, inside: stateFolder)
                     for (month, assets) in monthGroups.sorted(by: { $0.key.sortOrder < $1.key.sortOrder }) {
                         let monthAlbum = try await findOrCreateAlbum(named: month.name, inside: locationFolder)
                         try await add(assets, to: monthAlbum)
@@ -162,9 +170,19 @@ final class PhotoAlbumOrganizer: ObservableObject {
                     }
 
                     // Migration happens only after every month album has been populated.
-                    if let oldSingleAlbum = findAlbum(named: key.place, inside: yearFolder) {
+                    if let oldSingleAlbum = findAlbum(named: key.city, inside: stateFolder) {
                         try await deleteAlbum(oldSingleAlbum)
                     }
+                }
+
+                // Remove the app's former Year → "City, State" collection only
+                // after the replacement hierarchy has been populated.
+                let legacyName = "\(key.city), \(key.state)"
+                if let legacyAlbum = findAlbum(named: legacyName, inside: yearFolder) {
+                    try await deleteAlbum(legacyAlbum)
+                }
+                if let legacyFolder = findFolder(named: legacyName, inside: yearFolder) {
+                    try await deleteFolder(legacyFolder)
                 }
             }
 
@@ -269,6 +287,11 @@ final class PhotoAlbumOrganizer: ObservableObject {
             .first(where: { $0.localizedTitle == name })
     }
 
+    private func findFolder(named name: String, inside parent: PHCollectionList) -> PHCollectionList? {
+        childCollections(in: parent).compactMap { $0 as? PHCollectionList }
+            .first(where: { $0.localizedTitle == name })
+    }
+
     private func childCollections(in parent: PHCollectionList) -> [PHCollection] {
         let result = PHCollection.fetchCollections(in: parent, options: nil)
         var collections: [PHCollection] = []
@@ -318,6 +341,13 @@ final class PhotoAlbumOrganizer: ObservableObject {
         }
     }
 
+    private func deleteFolder(_ folder: PHCollectionList) async throws {
+        guard folder.canPerform(.deleteContent) else { return }
+        try await PHPhotoLibrary.shared().performChanges {
+            PHCollectionListChangeRequest.deleteCollectionLists([folder] as NSArray)
+        }
+    }
+
     private func presentError(_ message: String) {
         statusText = ""
         alertMessage = message
@@ -327,7 +357,9 @@ final class PhotoAlbumOrganizer: ObservableObject {
 
 private struct YearLocation: Hashable {
     let year: String
-    let place: String
+    let country: String
+    let state: String
+    let city: String
 }
 
 private struct MonthGroup: Hashable {
@@ -336,7 +368,7 @@ private struct MonthGroup: Hashable {
 }
 
 private enum LocationResolution {
-    case resolved(String)
+    case resolved(ResolvedLocation)
     case unresolved
 }
 

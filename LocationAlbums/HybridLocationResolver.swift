@@ -2,10 +2,16 @@ import CoreLocation
 import Foundation
 import SQLite3
 
+struct ResolvedLocation: Codable, Hashable {
+    let country: String
+    let state: String
+    let city: String
+}
+
 final class HybridLocationResolver {
     private let india = IndiaPlaceDatabase()
     private let geocoder = CLGeocoder()
-    private var cache: [String: String]
+    private var cache: [String: ResolvedLocation]
     private let cacheURL: URL?
     private var cacheIsDirty = false
 
@@ -15,7 +21,7 @@ final class HybridLocationResolver {
         let resolvedCacheURL: URL?
         if let directory {
             try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
-            resolvedCacheURL = directory.appendingPathComponent("LocationLookupCache.json")
+            resolvedCacheURL = directory.appendingPathComponent("LocationLookupCacheV2.json")
         } else {
             resolvedCacheURL = nil
         }
@@ -23,14 +29,14 @@ final class HybridLocationResolver {
 
         if let resolvedCacheURL,
            let data = try? Data(contentsOf: resolvedCacheURL),
-           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+           let decoded = try? JSONDecoder().decode([String: ResolvedLocation].self, from: data) {
             cache = decoded
         } else {
             cache = [:]
         }
     }
 
-    func resolve(_ location: CLLocation) async -> String? {
+    func resolve(_ location: CLLocation) async -> ResolvedLocation? {
         let key = cacheKey(for: location.coordinate)
         if let cached = cache[key] { return cached }
 
@@ -58,7 +64,7 @@ final class HybridLocationResolver {
         }
     }
 
-    private func remember(_ value: String, for key: String) {
+    private func remember(_ value: ResolvedLocation, for key: String) {
         cache[key] = value
         cacheIsDirty = true
         if cache.count.isMultiple(of: 100) { flushCache() }
@@ -68,23 +74,21 @@ final class HybridLocationResolver {
         String(format: "%.2f,%.2f", coordinate.latitude, coordinate.longitude)
     }
 
-    private func resolveWithApple(_ location: CLLocation) async -> String? {
+    private func resolveWithApple(_ location: CLLocation) async -> ResolvedLocation? {
         for attempt in 0..<4 {
             do {
                 guard let placemark = try await geocoder.reverseGeocodeLocation(location).first else {
                     throw LocationResolverError.emptyResult
                 }
-                let state = nonEmpty(placemark.administrativeArea)
-                let country = nonEmpty(placemark.country)
-                guard let place = nonEmpty(placemark.locality)
-                        ?? nonEmpty(placemark.subAdministrativeArea)
-                        ?? state
-                        ?? country else {
+                guard let country = nonEmpty(placemark.country)
+                        ?? nonEmpty(placemark.isoCountryCode) else {
                     throw LocationResolverError.emptyResult
                 }
-                if let state, state != place { return "\(place), \(state)" }
-                if let country, country != place { return "\(place), \(country)" }
-                return place
+                let state = nonEmpty(placemark.administrativeArea) ?? "Unknown State or Region"
+                let city = nonEmpty(placemark.locality)
+                    ?? nonEmpty(placemark.subAdministrativeArea)
+                    ?? "Unknown City"
+                return ResolvedLocation(country: country, state: state, city: city)
             } catch {
                 guard attempt < 3 else { return nil }
                 let delay = UInt64(attempt + 1) * 700_000_000
@@ -124,7 +128,7 @@ private final class IndiaPlaceDatabase {
         boundary?.contains(coordinate) == true
     }
 
-    func nearestPlace(to coordinate: CLLocationCoordinate2D) -> String? {
+    func nearestPlace(to coordinate: CLLocationCoordinate2D) -> ResolvedLocation? {
         guard let database else { return nil }
         let maximumDistance = 50.0
         let latitudeDelta = maximumDistance / 111.0
@@ -180,7 +184,8 @@ private final class IndiaPlaceDatabase {
 
         guard !candidates.isEmpty else { return nil }
         let recognizedCities = candidates.filter {
-            $0.distance <= 20 && ($0.population >= 10_000 || $0.featureCode.hasPrefix("PPLA") || $0.featureCode == "PPLC")
+            $0.distance <= catchmentRadius(for: $0)
+                && ($0.population >= 100_000 || $0.featureCode.hasPrefix("PPLA") || $0.featureCode == "PPLC")
         }
         let chosen: PlaceCandidate?
         if recognizedCities.isEmpty {
@@ -189,7 +194,17 @@ private final class IndiaPlaceDatabase {
             chosen = recognizedCities.min(by: { cityScore($0) < cityScore($1) })
         }
         guard let chosen else { return nil }
-        return chosen.state.isEmpty ? chosen.name : "\(chosen.name), \(chosen.state)"
+        return ResolvedLocation(
+            country: "India",
+            state: chosen.state.isEmpty ? "Unknown State or Region" : chosen.state,
+            city: chosen.name
+        )
+    }
+
+    private func catchmentRadius(for candidate: PlaceCandidate) -> Double {
+        if candidate.population >= 1_000_000 || candidate.featureCode == "PPLC" { return 40 }
+        if candidate.population >= 100_000 || candidate.featureCode.hasPrefix("PPLA") { return 30 }
+        return 20
     }
 
     private func cityScore(_ candidate: PlaceCandidate) -> Double {
