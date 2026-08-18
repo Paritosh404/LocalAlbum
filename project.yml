@@ -12,6 +12,19 @@ targets:
       - LocationAlbums
     info:
       path: LocationAlbums/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: Location Albums
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "3"
+        LSRequiresIPhoneOS: true
+        NSPhotoLibraryUsageDescription: Location Albums needs access to organize your photos into albums using their saved GPS location.
+        NSPhotoLibraryAddUsageDescription: Location Albums needs permission to add your existing photos to location albums.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.LocationAlbums

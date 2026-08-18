@@ -37,22 +37,22 @@ The deployment target is iOS 17.
 
 ## Build an IPA with GitHub Actions
 
-Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.1-unsigned-ipa` from the run's **Artifacts** section.
+Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.2-unsigned-ipa` from the run's **Artifacts** section.
 
 The workflow creates an **unsigned** IPA so no signing certificate needs to be stored in GitHub. This is suitable for AltStore, which signs the IPA with your Apple ID during installation.
 
 ### Install with AltStore
 
-1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.1-unsigned.ipa`.
+1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.2-unsigned.ipa`.
 2. Open AltStore on the iPhone and choose **My Apps → +**.
-3. Select `LocationAlbums-v1.1-unsigned.ipa` from Files.
+3. Select `LocationAlbums-v1.2-unsigned.ipa` from Files.
 4. Keep AltServer available for the initial install and subsequent refreshes.
 
 Free Apple Developer accounts generally require the app to be refreshed every seven days. Paid developer accounts have a longer signing period.
 
-## Version 1.1 crash fix
+## Version 1.2 crash fix
 
-- Forces Xcode to use the checked-in Info.plist containing both Photos privacy descriptions.
+- Declares both Photos privacy descriptions in `project.yml`, so XcodeGen preserves them when regenerating `Info.plist`.
 - Verifies the privacy keys in the compiled app before GitHub Actions packages the IPA.
 - Checks that existing Photos folders and albums allow changes before modifying them.
 - Adds photos in batches to avoid oversized Photos library transactions.

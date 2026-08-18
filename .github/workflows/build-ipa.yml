@@ -15,13 +15,13 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Verify source privacy keys
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Verify generated privacy keys
         run: |
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryUsageDescription" LocationAlbums/Info.plist
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" LocationAlbums/Info.plist
-
-      - name: Generate Xcode project
-        run: xcodegen generate
 
       - name: Build iPhone app
         run: |
@@ -53,11 +53,11 @@ jobs:
           fi
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          /usr/bin/zip -qry LocationAlbums-v1.1-unsigned.ipa Payload
+          /usr/bin/zip -qry LocationAlbums-v1.2-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: LocationAlbums-v1.1-unsigned-ipa
-          path: LocationAlbums-v1.1-unsigned.ipa
+          name: LocationAlbums-v1.2-unsigned-ipa
+          path: LocationAlbums-v1.2-unsigned.ipa
           if-no-files-found: error
