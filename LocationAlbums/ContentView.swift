@@ -15,7 +15,7 @@ struct ContentView: View {
                 VStack(spacing: 10) {
                     Text("Location Albums")
                         .font(.largeTitle.bold())
-                    Text("Organize your library by city, state, and month using the GPS location saved in each photo.")
+                    Text("Organize media by year and location, adding month folders only when a location spans multiple months.")
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -51,10 +51,14 @@ struct ContentView: View {
                     .disabled(organizer.isRunning || !organizer.photoAccessGranted)
                 }
 
-                Text("Photos without a usable city are added to “Unknown Location”. Your originals stay in the main library.")
+                Text("Only media without GPS goes to “Unknown Location”. Temporary lookup failures go to “Location Lookup Pending”.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+
+                Text("Version 1.7 • Build 8")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
 
                 Spacer()
             }

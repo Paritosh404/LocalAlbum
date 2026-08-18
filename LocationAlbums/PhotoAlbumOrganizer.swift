@@ -12,14 +12,19 @@ final class PhotoAlbumOrganizer: ObservableObject {
     @Published var alertMessage = ""
     @Published var photoAccessGranted = false
 
-    private let rootFolderName = "Organized Photos"
+    private let rootFolderName = "Organized Media"
+    private let reviewFolderName = "Needs Review"
     private let unknownLocationName = "Unknown Location"
-    private let monthFormatter: DateFormatter = {
+    private let pendingLocationName = "Location Lookup Pending"
+    private let groupingCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }()
+    private let monthNames: [String] = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "yyyy-MM"
-        return formatter
+        formatter.locale = .current
+        return formatter.monthSymbols
     }()
 
     init() {
@@ -61,15 +66,20 @@ final class PhotoAlbumOrganizer: ObservableObject {
         statusText = "Reading Photos library…"
         defer { isRunning = false }
 
-        let fetchResult = PHAsset.fetchAssets(with: .image, options: nil)
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.includeAllBurstAssets = true
+        let fetchResult = PHAsset.fetchAssets(with: fetchOptions)
         guard fetchResult.count > 0 else {
-            statusText = "No photos found"
+            statusText = "No media found"
             return
         }
 
-        var locatedGroups: [LocationMonth: [PHAsset]] = [:]
+        var locatedGroups: [YearLocation: [MonthGroup: [PHAsset]]] = [:]
         var unknownAssets: [PHAsset] = []
-        var locationCache: [CoordinateKey: String?] = [:]
+        var pendingAssets: [PHAsset] = []
+        var gpsAssets: [PHAsset] = []
+        var resolvedAssets: [PHAsset] = []
+        var locationCache: [CoordinateKey: LocationResolution] = [:]
         let geocoder = CLGeocoder()
         let totalAssets = fetchResult.count
 
@@ -78,55 +88,101 @@ final class PhotoAlbumOrganizer: ObservableObject {
             statusText = "Reading locations \(index + 1) of \(totalAssets)…"
             progress = Double(index) / Double(totalAssets) * 0.72
 
-            guard let location = asset.location else {
+            guard let location = asset.location,
+                  CLLocationCoordinate2DIsValid(location.coordinate) else {
                 unknownAssets.append(asset)
                 continue
             }
+            gpsAssets.append(asset)
 
             let cacheKey = CoordinateKey(location.coordinate)
-            let placeName: String?
+            let resolution: LocationResolution
             if let cached = locationCache[cacheKey] {
-                placeName = cached
+                resolution = cached
             } else {
-                placeName = await cityAndState(for: location, using: geocoder)
-                locationCache[cacheKey] = placeName
+                // Avoid overwhelming Apple's reverse-geocoding service on large libraries.
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if let placeName = await cityAndState(for: location, using: geocoder) {
+                    resolution = .resolved(placeName)
+                } else {
+                    resolution = .unresolved
+                }
+                locationCache[cacheKey] = resolution
             }
 
-            guard let placeName else {
-                unknownAssets.append(asset)
+            guard case .resolved(let placeName) = resolution else {
+                pendingAssets.append(asset)
                 continue
             }
 
-            let month = asset.creationDate.map(monthFormatter.string(from:)) ?? "Unknown Date"
-            locatedGroups[LocationMonth(place: placeName, month: month), default: []].append(asset)
+            let dateGroup = yearAndMonth(for: asset.creationDate)
+            let location = YearLocation(year: dateGroup.year, place: placeName)
+            locatedGroups[location, default: [:]][dateGroup.month, default: []].append(asset)
+            resolvedAssets.append(asset)
         }
 
         do {
             let root = try await findOrCreateRootFolder(named: rootFolderName)
+            let reviewFolder = try await findOrCreateFolder(named: reviewFolderName, inside: root)
             let sortedGroups = locatedGroups.sorted {
-                ($0.key.place, $0.key.month) < ($1.key.place, $1.key.month)
+                ($0.key.year, $0.key.place) < ($1.key.year, $1.key.place)
             }
-            let totalWrites = sortedGroups.count + (unknownAssets.isEmpty ? 0 : 1)
+            let locationWrites = sortedGroups.reduce(0) { total, group in
+                total + max(group.value.count, 1)
+            }
+            let totalWrites = locationWrites
+                + (unknownAssets.isEmpty ? 0 : 1)
+                + (pendingAssets.isEmpty ? 0 : 1)
             var completedWrites = 0
 
-            for (key, groupAssets) in sortedGroups {
-                statusText = "Updating \(key.place) / \(key.month)…"
-                let cityFolder = try await findOrCreateFolder(named: key.place, inside: root)
-                let monthAlbum = try await findOrCreateAlbum(named: key.month, inside: cityFolder)
-                try await add(groupAssets, to: monthAlbum)
-                completedWrites += 1
-                progress = 0.72 + Double(completedWrites) / Double(max(totalWrites, 1)) * 0.28
+            // Repair earlier runs of the current hierarchy.
+            if let oldUnknown = findAlbum(named: unknownLocationName, inside: reviewFolder), !gpsAssets.isEmpty {
+                statusText = "Correcting Unknown Location…"
+                try await remove(gpsAssets, from: oldUnknown)
+            }
+            if let oldPending = findAlbum(named: pendingLocationName, inside: reviewFolder), !resolvedAssets.isEmpty {
+                try await remove(resolvedAssets, from: oldPending)
+            }
+
+            for (key, monthGroups) in sortedGroups {
+                statusText = "Updating \(key.year) / \(key.place)…"
+                let yearFolder = try await findOrCreateFolder(named: key.year, inside: root)
+
+                if monthGroups.count == 1, let assets = monthGroups.values.first {
+                    let locationAlbum = try await findOrCreateAlbum(named: key.place, inside: yearFolder)
+                    try await add(assets, to: locationAlbum)
+                    completedWrites += 1
+                    progress = 0.72 + Double(completedWrites) / Double(max(totalWrites, 1)) * 0.28
+                } else {
+                    let locationFolder = try await findOrCreateFolder(named: key.place, inside: yearFolder)
+                    for (month, assets) in monthGroups.sorted(by: { $0.key.sortOrder < $1.key.sortOrder }) {
+                        let monthAlbum = try await findOrCreateAlbum(named: month.name, inside: locationFolder)
+                        try await add(assets, to: monthAlbum)
+                        completedWrites += 1
+                        progress = 0.72 + Double(completedWrites) / Double(max(totalWrites, 1)) * 0.28
+                    }
+
+                    // Migration happens only after every month album has been populated.
+                    if let oldSingleAlbum = findAlbum(named: key.place, inside: yearFolder) {
+                        try await deleteAlbum(oldSingleAlbum)
+                    }
+                }
             }
 
             if !unknownAssets.isEmpty {
                 statusText = "Updating \(unknownLocationName)…"
-                let album = try await findOrCreateAlbum(named: unknownLocationName, inside: root)
+                let album = try await findOrCreateAlbum(named: unknownLocationName, inside: reviewFolder)
                 try await add(unknownAssets, to: album)
             }
 
+            if !pendingAssets.isEmpty {
+                statusText = "Saving locations that need another lookup…"
+                let album = try await findOrCreateAlbum(named: pendingLocationName, inside: reviewFolder)
+                try await add(pendingAssets, to: album)
+            }
+
             progress = 1
-            let cityCount = Set(locatedGroups.keys.map(\.place)).count
-            statusText = "Organized \(totalAssets) photos across \(cityCount) locations"
+            statusText = "Organized \(totalAssets) media items across \(locatedGroups.count) locations"
         } catch {
             presentError("The albums could not be updated: \(error.localizedDescription)")
         }
@@ -135,21 +191,33 @@ final class PhotoAlbumOrganizer: ObservableObject {
     /// Apple's locality represents city, town, village, or municipality.
     /// If it is absent, subAdministrativeArea is the county fallback.
     private func cityAndState(for location: CLLocation, using geocoder: CLGeocoder) async -> String? {
-        do {
-            guard let placemark = try await geocoder.reverseGeocodeLocation(location).first else { return nil }
-            guard let place = nonEmpty(placemark.locality) ?? nonEmpty(placemark.subAdministrativeArea) else {
-                return nil
+        for attempt in 0..<4 {
+            do {
+                guard let placemark = try await geocoder.reverseGeocodeLocation(location).first else {
+                    throw OrganizerError.emptyGeocodeResult
+                }
+                let state = nonEmpty(placemark.administrativeArea)
+                let country = nonEmpty(placemark.country)
+                guard let place = nonEmpty(placemark.locality)
+                        ?? nonEmpty(placemark.subAdministrativeArea)
+                        ?? state
+                        ?? country else {
+                    throw OrganizerError.emptyGeocodeResult
+                }
+                if let state, state != place {
+                    return "\(place), \(state)"
+                }
+                if let country, country != place {
+                    return "\(place), \(country)"
+                }
+                return place
+            } catch {
+                guard attempt < 3 else { return nil }
+                let delay = UInt64(attempt + 1) * 700_000_000
+                try? await Task.sleep(nanoseconds: delay)
             }
-            if let state = nonEmpty(placemark.administrativeArea), state != place {
-                return "\(place), \(state)"
-            }
-            if let country = nonEmpty(placemark.country), country != place {
-                return "\(place), \(country)"
-            }
-            return place
-        } catch {
-            return nil
         }
+        return nil
     }
 
     private func nonEmpty(_ value: String?) -> String? {
@@ -157,6 +225,20 @@ final class PhotoAlbumOrganizer: ObservableObject {
             return nil
         }
         return value
+    }
+
+    private func yearAndMonth(for date: Date?) -> (year: String, month: MonthGroup) {
+        guard let date else {
+            return ("Unknown Date", MonthGroup(sortOrder: 99, name: "Unknown Date"))
+        }
+        let components = groupingCalendar.dateComponents([.year, .month], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              month >= 1,
+              month <= monthNames.count else {
+            return ("Unknown Date", MonthGroup(sortOrder: 99, name: "Unknown Date"))
+        }
+        return (String(format: "%04d", year), MonthGroup(sortOrder: month, name: monthNames[month - 1]))
     }
 
     private func findOrCreateRootFolder(named name: String) async throws -> PHCollectionList {
@@ -222,6 +304,11 @@ final class PhotoAlbumOrganizer: ObservableObject {
         return album
     }
 
+    private func findAlbum(named name: String, inside parent: PHCollectionList) -> PHAssetCollection? {
+        childCollections(in: parent).compactMap { $0 as? PHAssetCollection }
+            .first(where: { $0.localizedTitle == name })
+    }
+
     private func childCollections(in parent: PHCollectionList) -> [PHCollection] {
         let result = PHCollection.fetchCollections(in: parent, options: nil)
         var collections: [PHCollection] = []
@@ -253,6 +340,24 @@ final class PhotoAlbumOrganizer: ObservableObject {
         }
     }
 
+    private func remove(_ assets: [PHAsset], from album: PHAssetCollection) async throws {
+        guard album.canPerform(.removeContent) else { return }
+        for start in stride(from: 0, to: assets.count, by: 500) {
+            let end = min(start + 500, assets.count)
+            let batch = Array(assets[start..<end])
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetCollectionChangeRequest(for: album)?.removeAssets(batch as NSArray)
+            }
+        }
+    }
+
+    private func deleteAlbum(_ album: PHAssetCollection) async throws {
+        guard album.canPerform(.deleteContent) else { return }
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetCollectionChangeRequest.deleteAssetCollections([album] as NSArray)
+        }
+    }
+
     private func presentError(_ message: String) {
         statusText = ""
         alertMessage = message
@@ -260,9 +365,19 @@ final class PhotoAlbumOrganizer: ObservableObject {
     }
 }
 
-private struct LocationMonth: Hashable {
+private struct YearLocation: Hashable {
+    let year: String
     let place: String
-    let month: String
+}
+
+private struct MonthGroup: Hashable {
+    let sortOrder: Int
+    let name: String
+}
+
+private enum LocationResolution {
+    case resolved(String)
+    case unresolved
 }
 
 private struct CoordinateKey: Hashable {
@@ -279,6 +394,7 @@ private struct CoordinateKey: Hashable {
 private enum OrganizerError: LocalizedError {
     case collectionCreationFailed(String)
     case collectionNotEditable(String)
+    case emptyGeocodeResult
 
     var errorDescription: String? {
         switch self {
@@ -286,6 +402,8 @@ private enum OrganizerError: LocalizedError {
             return "Could not create “\(name)”."
         case .collectionNotEditable(let name):
             return "“\(name)” cannot be modified. Rename or remove the existing Photos item, then try again."
+        case .emptyGeocodeResult:
+            return "The location lookup returned no place information."
         }
     }
 }

@@ -3,25 +3,35 @@
 A native SwiftUI iPhone app that organizes existing Apple Photos assets into this structure:
 
 ```text
-Organized Photos/
-├── Mumbai, Maharashtra/
-│   ├── 2024-01/
-│   └── 2024-02/
-├── Pune, Maharashtra/
-│   └── 2024-03/
-└── Unknown Location/
+Organized Media/
+├── 2026/
+│   ├── Leh, Ladakh/
+│   │   ├── January/
+│   │   └── February/
+│   └── Pune, Maharashtra/
+├── 2025/
+│   └── Delhi/
+└── Needs Review/
+    ├── Unknown Location/
+    └── Location Lookup Pending/
 ```
 
-`Organized Photos` and each location are Photos folders. The month entries and `Unknown Location` are albums, because Apple Photos folders cannot directly contain photos.
+`Organized Media`, each year, multi-month locations, and `Needs Review` are Photos folders. A single-month location is one album directly inside its year. Multi-month locations contain clearly named month albums such as `January` and `February`.
 
 ## Location rules
 
-- The app uses the photo's embedded GPS location, not the phone's current location.
+- The app processes every Photos-library asset type, including photos, Live Photos, videos, and other media returned by PhotoKit.
+- It uses each asset's saved GPS location, not the phone's current location.
 - Apple's `locality` field represents city, town, village, or municipality. If it is missing, the app uses the county-level `subAdministrativeArea` value.
 - The state (`administrativeArea`) is appended to avoid combining same-named cities.
 - Neighborhoods, streets, landmarks, and tiny GPS differences do not affect the album name.
-- If no suitable place is returned, the photo goes into `Unknown Location`.
-- Photos are grouped into `yyyy-MM` using their creation date.
+- Only assets with no valid GPS coordinate go into `Unknown Location`.
+- GPS-bearing assets whose lookup temporarily fails go into `Location Lookup Pending`, never `Unknown Location`.
+- Reverse geocoding is paced and retried four times; running the organizer again retries pending locations.
+- Located media is grouped first by year and location.
+- A location represented in only one month remains a single `City, State` album.
+- A location represented in multiple months becomes a `City, State` folder containing named month albums.
+- Re-running the organizer reuses the year folders and albums and repairs the current hierarchy's review albums.
 
 Albums reference the originals; the app does not duplicate or remove photos. Re-running it reuses the same folders and albums.
 
@@ -37,24 +47,31 @@ The deployment target is iOS 17.
 
 ## Build an IPA with GitHub Actions
 
-Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.3-unsigned-ipa` from the run's **Artifacts** section.
+Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.7-unsigned-ipa` from the run's **Artifacts** section.
 
 The workflow creates an **unsigned** IPA so no signing certificate needs to be stored in GitHub. This is suitable for AltStore, which signs the IPA with your Apple ID during installation.
 
 ### Install with AltStore
 
-1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.3-unsigned.ipa`.
+1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.7-unsigned.ipa`.
 2. Open AltStore on the iPhone and choose **My Apps → +**.
-3. Select `LocationAlbums-v1.3-unsigned.ipa` from Files.
+3. Select `LocationAlbums-v1.7-unsigned.ipa` from Files.
 4. Keep AltServer available for the initial install and subsequent refreshes.
 
 Free Apple Developer accounts generally require the app to be refreshed every seven days. Paid developer accounts have a longer signing period.
 
-## Version 1.3 Photos access flow
+## Version 1.7 adaptive month structure
 
 - Declares both Photos privacy descriptions in `project.yml`, so XcodeGen preserves them when regenerating `Info.plist`.
 - Verifies the privacy keys in the compiled app before GitHub Actions packages the IPA.
 - Uses the proven two-step Photos authorization flow from PhotoUSBBackup: grant access first, then organize.
 - Prevents the organizer from scanning until Photos authorization is confirmed.
+- Includes every PhotoKit media type instead of filtering for images.
+- Retries and paces reverse geocoding instead of treating transient failures as unknown GPS.
+- Uses `Organized Media → Year → City, State` for single-month locations.
+- Adds `City, State → Month` only when that location contains media from multiple months.
+- Places location problems together under `Needs Review`.
 - Checks that existing Photos folders and albums allow changes before modifying them.
 - Adds photos in batches to avoid oversized Photos library transactions.
+
+If a second month appears on a later run, the app fills the new month albums first and then deletes its old direct location album. Deleting that album does not delete any original media.
