@@ -22,17 +22,34 @@ struct ContentView: View {
 
                 statusView
 
-                Button {
-                    Task { await organizer.organize() }
-                } label: {
-                    Label(organizer.isRunning ? "Organizing…" : "Organize Photos",
-                          systemImage: "wand.and.stars")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                VStack(spacing: 12) {
+                    if organizer.photoAccessGranted {
+                        Label("Photos access granted", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button {
+                            Task { await organizer.requestPhotoPermission() }
+                        } label: {
+                            Label("Allow Photos Access", systemImage: "photo.badge.checkmark")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                    }
+
+                    Button {
+                        Task { await organizer.organize() }
+                    } label: {
+                        Label(organizer.isRunning ? "Organizing…" : "Organize Photos",
+                              systemImage: "wand.and.stars")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(organizer.isRunning || !organizer.photoAccessGranted)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(organizer.isRunning)
 
                 Text("Photos without a usable city are added to “Unknown Location”. Your originals stay in the main library.")
                     .font(.footnote)
@@ -48,6 +65,9 @@ struct ContentView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(organizer.alertMessage)
+            }
+            .onAppear {
+                organizer.refreshPermission()
             }
         }
     }

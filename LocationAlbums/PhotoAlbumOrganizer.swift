@@ -10,6 +10,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
     @Published var statusText = ""
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published var photoAccessGranted = false
 
     private let rootFolderName = "Organized Photos"
     private let unknownLocationName = "Unknown Location"
@@ -21,18 +22,44 @@ final class PhotoAlbumOrganizer: ObservableObject {
         return formatter
     }()
 
+    init() {
+        refreshPermission()
+    }
+
+    func refreshPermission() {
+        let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        photoAccessGranted = authorization == .authorized || authorization == .limited
+    }
+
+    func requestPhotoPermission() async {
+        let authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        photoAccessGranted = authorization == .authorized || authorization == .limited
+
+        switch authorization {
+        case .authorized:
+            statusText = "Full Photos access granted"
+        case .limited:
+            statusText = "Limited Photos access granted"
+        case .denied, .restricted:
+            presentError("Photo access was not granted. Enable it in Settings → Privacy & Security → Photos.")
+        case .notDetermined:
+            presentError("Photos permission is still undetermined. Please try again.")
+        @unknown default:
+            presentError("The Photos permission state could not be determined.")
+        }
+    }
+
     func organize() async {
         guard !isRunning else { return }
-        isRunning = true
-        progress = 0
-        statusText = "Requesting photo access…"
-        defer { isRunning = false }
-
-        let authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        guard authorization == .authorized || authorization == .limited else {
-            presentError("Photo access is required. Enable it in Settings → Privacy & Security → Photos.")
+        refreshPermission()
+        guard photoAccessGranted else {
+            presentError("Allow Photos access before organizing your library.")
             return
         }
+        isRunning = true
+        progress = 0
+        statusText = "Reading Photos library…"
+        defer { isRunning = false }
 
         let fetchResult = PHAsset.fetchAssets(with: .image, options: nil)
         guard fetchResult.count > 0 else {
@@ -40,17 +67,16 @@ final class PhotoAlbumOrganizer: ObservableObject {
             return
         }
 
-        var assets: [PHAsset] = []
-        fetchResult.enumerateObjects { asset, _, _ in assets.append(asset) }
-
         var locatedGroups: [LocationMonth: [PHAsset]] = [:]
         var unknownAssets: [PHAsset] = []
         var locationCache: [CoordinateKey: String?] = [:]
         let geocoder = CLGeocoder()
+        let totalAssets = fetchResult.count
 
-        for (index, asset) in assets.enumerated() {
-            statusText = "Reading locations \(index + 1) of \(assets.count)…"
-            progress = Double(index) / Double(assets.count) * 0.72
+        for index in 0..<totalAssets {
+            let asset = fetchResult.object(at: index)
+            statusText = "Reading locations \(index + 1) of \(totalAssets)…"
+            progress = Double(index) / Double(totalAssets) * 0.72
 
             guard let location = asset.location else {
                 unknownAssets.append(asset)
@@ -100,7 +126,7 @@ final class PhotoAlbumOrganizer: ObservableObject {
 
             progress = 1
             let cityCount = Set(locatedGroups.keys.map(\.place)).count
-            statusText = "Organized \(assets.count) photos across \(cityCount) locations"
+            statusText = "Organized \(totalAssets) photos across \(cityCount) locations"
         } catch {
             presentError("The albums could not be updated: \(error.localizedDescription)")
         }
