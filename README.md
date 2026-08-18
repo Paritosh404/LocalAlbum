@@ -13,28 +13,34 @@ Organized Media/
 │       └── Maharashtra/
 │           └── Pune/
 ├── 2025/
-│   └── India/
-│       └── Delhi/
-│           └── New Delhi/
+│   ├── India/
+│   │   └── Delhi
+│   └── Thailand/
+│       ├── Bangkok
+│       └── Pattaya/
+│           ├── March/
+│           └── April/
 └── Needs Review/
     ├── Unknown Location/
     └── Location Lookup Pending/
 ```
 
-`Organized Media`, each year, country, state, multi-month city, and `Needs Review` are Photos folders. A single-month city is one album directly inside its state. Multi-month cities contain clearly named month albums such as `January` and `February`.
+`Organized Media`, each year, country, Indian state, multi-month city, and `Needs Review` are Photos folders. A single-month city is one album at its final hierarchy level. Multi-month cities contain clearly named month albums such as `January` and `February`.
 
 ## Location rules
 
 - The app processes every Photos-library asset type, including photos, Live Photos, videos, and other media returned by PhotoKit.
 - It uses each asset's saved GPS location, not the phone's current location.
 - Apple's `locality` field represents city, town, village, or municipality. If it is missing, the app uses the county-level `subAdministrativeArea` value.
-- Country and state are retained as separate hierarchy levels so same-named cities are never combined accidentally.
+- Indian locations retain their state level, except Delhi, which is kept as one location without a further city split.
+- Countries outside India omit the state/province level and use `Year → Country → City`.
 - Neighborhoods, streets, landmarks, and tiny GPS differences do not affect the album name.
 - Only assets with no valid GPS coordinate go into `Unknown Location`.
 - GPS-bearing assets whose lookup temporarily fails go into `Location Lookup Pending`, never `Unknown Location`.
 - Apple's worldwide fallback is retried up to four times; running the organizer again retries pending locations.
-- Located media is grouped as `Year → Country → State → City`.
-- A city represented in only one month remains a single city album inside its state.
+- Indian media is grouped as `Year → India → State → City`, except Delhi uses `Year → India → Delhi`.
+- Media outside India is grouped as `Year → Country → City`.
+- A city represented in only one month remains a single city album at its final hierarchy level.
 - A city represented in multiple months becomes a city folder containing named month albums.
 - Re-running the organizer reuses the year folders and albums and repairs the current hierarchy's review albums.
 
@@ -61,20 +67,20 @@ The deployment target is iOS 17.
 
 ## Build an IPA with GitHub Actions
 
-Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.9-unsigned-ipa` from the run's **Artifacts** section.
+Push the project to GitHub and run **Build iPhone IPA** from the Actions tab. Every push to `main` also runs it. Download `LocationAlbums-v1.10-unsigned-ipa` from the run's **Artifacts** section.
 
 The workflow creates an **unsigned** IPA so no signing certificate needs to be stored in GitHub. This is suitable for AltStore, which signs the IPA with your Apple ID during installation.
 
 ### Install with AltStore
 
-1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.9-unsigned.ipa`.
+1. Download the Actions artifact, extract it, and locate `LocationAlbums-v1.10-unsigned.ipa`.
 2. Open AltStore on the iPhone and choose **My Apps → +**.
-3. Select `LocationAlbums-v1.9-unsigned.ipa` from Files.
+3. Select `LocationAlbums-v1.10-unsigned.ipa` from Files.
 4. Keep AltServer available for the initial install and subsequent refreshes.
 
 Free Apple Developer accounts generally require the app to be refreshed every seven days. Paid developer accounts have a longer signing period.
 
-## Version 1.9 country hierarchy and wider city grouping
+## Version 1.10 simplified international hierarchy
 
 - Declares both Photos privacy descriptions in `project.yml`, so XcodeGen preserves them when regenerating `Info.plist`.
 - Verifies the privacy keys in the compiled app before GitHub Actions packages the IPA.
@@ -82,10 +88,11 @@ Free Apple Developer accounts generally require the app to be refreshed every se
 - Prevents the organizer from scanning until Photos authorization is confirmed.
 - Includes every PhotoKit media type instead of filtering for images.
 - Retries and paces reverse geocoding instead of treating transient failures as unknown GPS.
-- Uses `Organized Media → Year → Country → State → City`.
+- Uses `Year → India → State → City` within India, while keeping Delhi as a single location.
+- Uses the simpler `Year → Country → City` hierarchy outside India.
 - Adds month albums inside a city only when that city contains media from multiple months.
 - Groups nearby smaller Indian localities under a major city using wider population-aware catchment areas.
-- Migrates app-created `Year → City, State` albums and folders after their replacement hierarchy is populated; original media is never deleted.
+- Migrates app-created older hierarchy levels after their replacement destinations are populated; original media is never deleted.
 - Places location problems together under `Needs Review`.
 - Resolves Indian GPS coordinates locally without API pacing or network access.
 - Uses Apple geocoding only as the worldwide fallback.

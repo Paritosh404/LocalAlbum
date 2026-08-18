@@ -60,7 +60,7 @@ struct ContentView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
-                Text("Version 1.9 • Build 11")
+                Text("Version 1.10 • Build 12")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 

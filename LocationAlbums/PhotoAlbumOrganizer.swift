@@ -81,6 +81,8 @@ final class PhotoAlbumOrganizer: ObservableObject {
         var gpsAssets: [PHAsset] = []
         var resolvedAssets: [PHAsset] = []
         var locationCache: [CoordinateKey: LocationResolution] = [:]
+        var legacyFlatCollections: Set<LegacyFlatCollection> = []
+        var legacyStateFolders: Set<LegacyStateFolder> = []
         let totalAssets = fetchResult.count
 
         for index in 0..<totalAssets {
@@ -114,13 +116,31 @@ final class PhotoAlbumOrganizer: ObservableObject {
             }
 
             let dateGroup = yearAndMonth(for: asset.creationDate)
+            let hierarchy = hierarchyLocation(for: resolvedLocation)
             let locationKey = YearLocation(
                 year: dateGroup.year,
-                country: resolvedLocation.country,
-                state: resolvedLocation.state,
-                city: resolvedLocation.city
+                country: hierarchy.country,
+                state: hierarchy.state,
+                city: hierarchy.city
             )
             locatedGroups[locationKey, default: [:]][dateGroup.month, default: []].append(asset)
+            legacyFlatCollections.insert(
+                LegacyFlatCollection(
+                    year: dateGroup.year,
+                    name: "\(resolvedLocation.city), \(resolvedLocation.state)"
+                )
+            )
+            if hierarchy.state == nil {
+                legacyStateFolders.insert(
+                    LegacyStateFolder(
+                        year: dateGroup.year,
+                        country: hierarchy.country,
+                        state: resolvedLocation.state,
+                        legacyCity: resolvedLocation.city,
+                        targetCity: hierarchy.city
+                    )
+                )
+            }
             resolvedAssets.append(asset)
         }
         locationResolver.flushCache()
@@ -129,8 +149,8 @@ final class PhotoAlbumOrganizer: ObservableObject {
             let root = try await findOrCreateRootFolder(named: rootFolderName)
             let reviewFolder = try await findOrCreateFolder(named: reviewFolderName, inside: root)
             let sortedGroups = locatedGroups.sorted {
-                ($0.key.year, $0.key.country, $0.key.state, $0.key.city)
-                    < ($1.key.year, $1.key.country, $1.key.state, $1.key.city)
+                ($0.key.year, $0.key.country, $0.key.state ?? "", $0.key.city)
+                    < ($1.key.year, $1.key.country, $1.key.state ?? "", $1.key.city)
             }
             let locationWrites = sortedGroups.reduce(0) { total, group in
                 total + max(group.value.count, 1)
@@ -150,18 +170,26 @@ final class PhotoAlbumOrganizer: ObservableObject {
             }
 
             for (key, monthGroups) in sortedGroups {
-                statusText = "Updating \(key.year) / \(key.country) / \(key.state) / \(key.city)…"
+                let hierarchyDescription = [key.year, key.country, key.state, key.city]
+                    .compactMap { $0 }
+                    .joined(separator: " / ")
+                statusText = "Updating \(hierarchyDescription)…"
                 let yearFolder = try await findOrCreateFolder(named: key.year, inside: root)
                 let countryFolder = try await findOrCreateFolder(named: key.country, inside: yearFolder)
-                let stateFolder = try await findOrCreateFolder(named: key.state, inside: countryFolder)
+                let cityParent: PHCollectionList
+                if let state = key.state {
+                    cityParent = try await findOrCreateFolder(named: state, inside: countryFolder)
+                } else {
+                    cityParent = countryFolder
+                }
 
                 if monthGroups.count == 1, let assets = monthGroups.values.first {
-                    let locationAlbum = try await findOrCreateAlbum(named: key.city, inside: stateFolder)
+                    let locationAlbum = try await findOrCreateAlbum(named: key.city, inside: cityParent)
                     try await add(assets, to: locationAlbum)
                     completedWrites += 1
                     progress = 0.72 + Double(completedWrites) / Double(max(totalWrites, 1)) * 0.28
                 } else {
-                    let locationFolder = try await findOrCreateFolder(named: key.city, inside: stateFolder)
+                    let locationFolder = try await findOrCreateFolder(named: key.city, inside: cityParent)
                     for (month, assets) in monthGroups.sorted(by: { $0.key.sortOrder < $1.key.sortOrder }) {
                         let monthAlbum = try await findOrCreateAlbum(named: month.name, inside: locationFolder)
                         try await add(assets, to: monthAlbum)
@@ -170,19 +198,46 @@ final class PhotoAlbumOrganizer: ObservableObject {
                     }
 
                     // Migration happens only after every month album has been populated.
-                    if let oldSingleAlbum = findAlbum(named: key.city, inside: stateFolder) {
+                    if let oldSingleAlbum = findAlbum(named: key.city, inside: cityParent) {
                         try await deleteAlbum(oldSingleAlbum)
                     }
                 }
+            }
 
-                // Remove the app's former Year → "City, State" collection only
-                // after the replacement hierarchy has been populated.
-                let legacyName = "\(key.city), \(key.state)"
-                if let legacyAlbum = findAlbum(named: legacyName, inside: yearFolder) {
-                    try await deleteAlbum(legacyAlbum)
+            // Remove older app-created hierarchy levels only after every new
+            // destination has been populated. Original Photos assets remain intact.
+            for legacy in legacyFlatCollections {
+                guard let yearFolder = findFolder(named: legacy.year, inside: root) else { continue }
+                if let album = findAlbum(named: legacy.name, inside: yearFolder) {
+                    try await deleteAlbum(album)
                 }
-                if let legacyFolder = findFolder(named: legacyName, inside: yearFolder) {
-                    try await deleteFolder(legacyFolder)
+                if let folder = findFolder(named: legacy.name, inside: yearFolder) {
+                    try await deleteFolder(folder)
+                }
+            }
+            for legacy in legacyStateFolders {
+                guard let yearFolder = findFolder(named: legacy.year, inside: root),
+                      let countryFolder = findFolder(named: legacy.country, inside: yearFolder),
+                      let stateFolder = findFolder(named: legacy.state, inside: countryFolder) else { continue }
+                let destinationKey = YearLocation(
+                    year: legacy.year,
+                    country: legacy.country,
+                    state: nil,
+                    city: legacy.targetCity
+                )
+                let destinationUsesFolder = (locatedGroups[destinationKey]?.count ?? 0) > 1
+                let stateIsDestination = destinationUsesFolder
+                    && legacy.state.caseInsensitiveCompare(legacy.targetCity) == .orderedSame
+
+                if stateIsDestination {
+                    if let album = findAlbum(named: legacy.legacyCity, inside: stateFolder) {
+                        try await deleteAlbum(album)
+                    }
+                    if let folder = findFolder(named: legacy.legacyCity, inside: stateFolder) {
+                        try await deleteFolder(folder)
+                    }
+                } else {
+                    try await deleteFolder(stateFolder)
                 }
             }
 
@@ -217,6 +272,20 @@ final class PhotoAlbumOrganizer: ObservableObject {
             return ("Unknown Date", MonthGroup(sortOrder: 99, name: "Unknown Date"))
         }
         return (String(format: "%04d", year), MonthGroup(sortOrder: month, name: monthNames[month - 1]))
+    }
+
+    private func hierarchyLocation(for location: ResolvedLocation) -> HierarchyLocation {
+        let isIndia = location.country.caseInsensitiveCompare("India") == .orderedSame
+        let isDelhi = location.state.caseInsensitiveCompare("Delhi") == .orderedSame
+            || location.state.localizedCaseInsensitiveContains("Delhi")
+
+        if isIndia && !isDelhi {
+            return HierarchyLocation(country: "India", state: location.state, city: location.city)
+        }
+        if isIndia {
+            return HierarchyLocation(country: "India", state: nil, city: "Delhi")
+        }
+        return HierarchyLocation(country: location.country, state: nil, city: location.city)
     }
 
     private func findOrCreateRootFolder(named name: String) async throws -> PHCollectionList {
@@ -358,8 +427,27 @@ final class PhotoAlbumOrganizer: ObservableObject {
 private struct YearLocation: Hashable {
     let year: String
     let country: String
-    let state: String
+    let state: String?
     let city: String
+}
+
+private struct HierarchyLocation {
+    let country: String
+    let state: String?
+    let city: String
+}
+
+private struct LegacyFlatCollection: Hashable {
+    let year: String
+    let name: String
+}
+
+private struct LegacyStateFolder: Hashable {
+    let year: String
+    let country: String
+    let state: String
+    let legacyCity: String
+    let targetCity: String
 }
 
 private struct MonthGroup: Hashable {
